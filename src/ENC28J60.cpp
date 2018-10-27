@@ -132,16 +132,7 @@ void ENC28J60::initialize() {
     chip_deselect();
 
     // Perform a soft reset
-    write(WriteOp::SOFT_RESET, 0, static_cast<uint8_t>(WriteOp::SOFT_RESET));
-
-    // Wait for the clock to become ready
-    // Errata #2: After sending a reset command, PHY clock is
-    // stopped but the ESTAT::CLKREADY bit is not cleared.
-    // Workaround: Wait at least 1ms for device to be ready.
-    for (uint16_t i = 0; i < 0xFFF; i++) {asm __volatile__("nop"); }
-    // Poll for CLKREADY bit
-    while (!read(ReadOp::READ_CTRL_REG, Register::ESTAT)
-            & static_cast<uint8_t>(ESTAT::CLKRDY));
+    soft_reset();
 
     // Set RX buffer start/end
     write_register16(Register::ERXST, rx_buffer_start);
@@ -223,4 +214,116 @@ void ENC28J60::initialize() {
 
 uint8_t ENC28J60::get_hardware_version() {
     return read_register8(Register::EREVID) & 0b11111;
+}
+
+bool ENC28J60::is_link_up() {
+    const uint16_t stat1 = read_phy_reg(PhyRegister::STAT1);
+    return stat1 & static_cast<uint16_t>(PHSTAT1::LLSTAT);
+}
+
+void ENC28J60::soft_reset() {
+    // Write soft reset command
+    write(WriteOp::SOFT_RESET, 0, static_cast<uint8_t>(WriteOp::SOFT_RESET));
+
+    // Wait for the clock to become ready
+    // Errata #2: After sending a reset command, PHY clock is
+    // stopped but the ESTAT::CLKREADY bit is not cleared.
+    // Workaround: Wait at least 1ms for device to be ready.
+    for (uint16_t i = 0; i < 0xFFF; i++) {asm __volatile__("nop"); }
+
+    // Poll for CLKREADY bit
+    while (!read_register8(Register::ESTAT) & static_cast<uint8_t>(ESTAT::CLKRDY));
+}
+
+bool ENC28J60::perform_self_test() {
+    // Perform soft reset
+    soft_reset();
+
+    uint16_t macResult;
+    uint16_t bitsResult;
+
+    // Clear status registers
+    write_register8(Register::ECON1, 0);
+    write_register16(Register::EDMAST, 0);
+
+    // Set up necessary pointers for the DMA to calculate over the entire memory
+    write_register16(Register::EDMAND, 0x1FFFu); // DMA end
+    write_register16(Register::ERXND, 0x1FFFu); // RX end
+
+    // Enable Test Mode and do an Address Fill
+    const uint8_t ebstcon_value = (
+        static_cast<uint8_t>(EBSTCON::TME) | // Test mode enable
+        static_cast<uint8_t>(EBSTCON::BISTST) |  // Test in progress
+        static_cast<uint8_t>(EBSTCON_TESTMODE::ADDRESS_FILL) // Test mode
+    );
+    write_register8(Register::EBSTCON, ebstcon_value);
+
+    // Wait for BISTST to be reset, only after that are we actually ready to
+    // start the test
+    while (read_register8(Register::EBSTCON) & static_cast<uint8_t>(EBSTCON::BISTST));
+
+    // Enable test mode
+    write(WriteOp::BIT_FIELD_CLR, Register::EBSTCON,
+        static_cast<uint8_t>(EBSTCON::TME));
+
+    // now start the actual reading an calculating the checksum until the end is
+    // reached
+    write(WriteOp::BIT_FIELD_SET, Register::ECON1,
+        static_cast<uint8_t>(ECON1::DMAST) |
+        static_cast<uint8_t>(ECON1::CSUMEN));
+
+    // Wait for DMA operation to complete
+    while(read_register8(Register::ECON1) & static_cast<uint8_t>(ECON1::DMAST));
+
+    // Read back DMA checksum
+    macResult = read_register16(Register::EDMACS);
+    // Read built in checksum value
+    bitsResult = read_register16(Register::EBSTCS);
+
+    // Compare the results
+    // 0xF807 should always be generated in Address fill mode
+    if ((macResult != bitsResult) || (bitsResult != 0xF807)) {
+        return false;
+    }
+
+    // Re-set test flag
+    write(WriteOp::BIT_FIELD_CLR, Register::EBSTCON,
+            static_cast<uint8_t>(EBSTCON::TME));
+
+    // Now start the BIST with random data test, and also keep on swapping the
+    // DMA/BIST memory ports.
+    write_register8(Register::EBSTSD, 0x55); // Fill seed
+    write_register8(Register::EBSTCON, (
+        static_cast<uint8_t>(EBSTCON::TME) |  // Test mode enable
+        static_cast<uint8_t>(EBSTCON::PSEL) |  // Port select 1: swap DMA and BIST
+        static_cast<uint8_t>(EBSTCON::BISTST) | // Test in progress
+        static_cast<uint8_t>(EBSTCON_TESTMODE::RANDOM_FILL) // Random fill test
+    ));
+
+
+    // wait for BISTST to be reset, only after that are we actually ready to
+    // start the test
+    // this was undocumented :(
+    while (read_register8(Register::EBSTCON) & static_cast<uint8_t>(EBSTCON::BISTST));
+
+    // Enable test mode
+    write(WriteOp::BIT_FIELD_CLR, Register::EBSTCON,
+        static_cast<uint8_t>(EBSTCON::TME));
+
+    // now start the actual reading an calculating the checksum until the end is
+    // reached
+    write(WriteOp::BIT_FIELD_SET, Register::ECON1,
+        static_cast<uint8_t>(ECON1::DMAST) |
+        static_cast<uint8_t>(ECON1::CSUMEN));
+
+    // Wait for DMA operation to complete
+    while(read_register8(Register::ECON1) & static_cast<uint8_t>(ECON1::DMAST));
+
+    // Read back DMA checksum
+    macResult = read_register16(Register::EDMACS);
+    // Read built in checksum value
+    bitsResult = read_register16(Register::EBSTCS);
+
+    // The checksum should be equal
+    return macResult == bitsResult;
 }

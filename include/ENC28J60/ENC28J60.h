@@ -61,6 +61,8 @@ namespace enc28j60 {
             ENC28J60(uint32_t spi, uint32_t cs_port, uint32_t cs_pin, const uint8_t *mac_addr);
             void initialize();
             uint8_t get_hardware_version();
+            bool is_link_up();
+            bool perform_self_test();
 
         private:
             // SPI bus
@@ -102,6 +104,8 @@ namespace enc28j60 {
             // PHY
             uint16_t read_phy_reg(PhyRegister address);
             void write_phy_reg(PhyRegister address, uint16_t data);
+
+            void soft_reset();
     };
 
 }

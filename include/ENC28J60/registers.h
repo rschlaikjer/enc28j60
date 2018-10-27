@@ -200,6 +200,12 @@ namespace enc28j60 {
         BISTST = 0x01
     };
 
+    enum class EBSTCON_TESTMODE : uint8_t {
+        PATTERN_SHIFT_FILL = (EBSTCON::TMSEL1),
+        ADDRESS_FILL = (EBSTCON::TMSEL0),
+        RANDOM_FILL = 0x0
+    };
+
     // PHY registers
     enum class PhyRegister : uint8_t {
         CON1 = 0x00,
@@ -227,6 +233,16 @@ namespace enc28j60 {
         PHDPX = 0x0800,
         LLSTAT = 0x0004,
         JBSTAT = 0x0002
+    };
+
+    // PHY PHSTAT2 Register Bit Definitions
+    enum class PHSTAT2 : uint16_t {
+        PLRITY = (1 << 5),
+        DPXSTAT = (1 << 9),
+        LSTAT = (1 << 10),
+        COLSTAT = (1 << 11),
+        RXSTAT = (1 << 12),
+        TXSTAT = (1 << 13)
     };
 
     // ENC28J60 PHY PHCON2 Register Bit Definitions
